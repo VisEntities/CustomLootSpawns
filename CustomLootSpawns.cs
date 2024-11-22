@@ -374,11 +374,18 @@ namespace Oxide.Plugins
                     randomValue -= prefab.Weight;
                     if (randomValue <= 0)
                     {
-                        return prefab.Prefab;
+                        if (_lootContainerPrefabs.TryGetValue(prefab.Prefab, out string fullPrefabPath))
+                            return fullPrefabPath;
+                        else
+                            return null;
                     }
                 }
 
-                return Data.Prefabs.LastOrDefault().Prefab;
+                PrefabData lastPrefab = Data.Prefabs.LastOrDefault();
+                if (lastPrefab != null && _lootContainerPrefabs.TryGetValue(lastPrefab.Prefab, out string lastPrefabPath))
+                    return lastPrefabPath;
+
+                return null;
             }
 
             public SpawnPointComponent GetSpawnPoint(string prefabPath, out Vector3 position, out Quaternion rotation)
@@ -1155,7 +1162,7 @@ namespace Oxide.Plugins
         }
 
         [ConsoleCommand(Cmd.SPAWN_POINT)]
-        private void CmdSpawnPoint(ConsoleSystem.Arg conArgs)
+        private void cmdSpawnPoint(ConsoleSystem.Arg conArgs)
         {
             if (conArgs == null)
                 return;
@@ -1287,7 +1294,7 @@ namespace Oxide.Plugins
         }
 
         [ConsoleCommand(Cmd.PREFAB)]
-        private void CmdPrefab(ConsoleSystem.Arg conArgs)
+        private void cmdPrefab(ConsoleSystem.Arg conArgs)
         {
             if (conArgs == null)
                 return;
@@ -1323,14 +1330,14 @@ namespace Oxide.Plugins
                         {
                             string shortPrefabName = args[i];
 
-                            if (!_lootContainerPrefabs.TryGetValue(shortPrefabName, out string fullPrefabPath))
+                            if (!_lootContainerPrefabs.ContainsKey(shortPrefabName))
                             {
                                 string predefinedNames = string.Join("\n", _lootContainerPrefabs.Keys.Select(name => $"- {name}"));
                                 MessagePlayer(player, $"The prefab name '{shortPrefabName}' is not recognized. Please use one of the following valid names:\n{predefinedNames}");
                                 continue;
                             }
 
-                            if (_spawnGroupBeingEdited.Prefabs.Any(p => p.Prefab.Equals(fullPrefabPath, StringComparison.OrdinalIgnoreCase)))
+                            if (_spawnGroupBeingEdited.Prefabs.Any(p => p.Prefab.Equals(shortPrefabName, StringComparison.OrdinalIgnoreCase)))
                             {
                                 MessagePlayer(player, $"Prefab '{shortPrefabName}' is already in the spawn group.");
                                 continue;
@@ -1345,7 +1352,7 @@ namespace Oxide.Plugins
 
                             PrefabData newPrefab = new PrefabData
                             {
-                                Prefab = fullPrefabPath,
+                                Prefab = shortPrefabName,
                                 Weight = weight
                             };
 
@@ -1376,15 +1383,8 @@ namespace Oxide.Plugins
                         {
                             string shortPrefabName = args[i];
 
-                            if (!_lootContainerPrefabs.TryGetValue(shortPrefabName, out string fullPrefabPath))
-                            {
-                                string predefinedNames = string.Join("\n", _lootContainerPrefabs.Keys.Select(name => $"- {name}"));
-                                MessagePlayer(player, $"The prefab name '{shortPrefabName}' is not recognized. Please use one of the following valid names:\n{predefinedNames}");
-                                continue;
-                            }
-
                             var prefabToRemove = _spawnGroupBeingEdited.Prefabs
-                                .FirstOrDefault(p => p.Prefab.Equals(fullPrefabPath, StringComparison.OrdinalIgnoreCase));
+                                .FirstOrDefault(p => p.Prefab.Equals(shortPrefabName, StringComparison.OrdinalIgnoreCase));
 
                             if (prefabToRemove == null)
                             {
