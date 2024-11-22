@@ -304,7 +304,7 @@ namespace Oxide.Plugins
 
             #endregion Component Lifecycle
 
-            #region
+            #region Spawn Lifecycle
 
             private void TimedSpawn()
             {
@@ -318,23 +318,6 @@ namespace Oxide.Plugins
             private float GetNextSpawnTime()
             {
                 return Random.Range(Data.MinimumRespawnDelaySeconds, Data.MaximumRespawnDelaySeconds);
-            }
-
-            public void Fill()
-            {
-                int numberToFill = Data.MaximumPopulation - CurrentPopulation;
-                Spawn(numberToFill);
-            }
-
-            public void Clear()
-            {
-                for (int i = SpawnedEntities.Count - 1; i >= 0; i--)
-                {
-                    BaseEntity entity = SpawnedEntities[i];
-                    if (entity != null)
-                        entity.Kill();
-                    SpawnedEntities.RemoveAt(i);
-                }
             }
 
             public void Spawn(int numberToSpawn)
@@ -359,6 +342,27 @@ namespace Oxide.Plugins
                     SpawnedEntities.Add(entity);
                 }
             }
+
+            public void Fill()
+            {
+                int numberToFill = Data.MaximumPopulation - CurrentPopulation;
+                Spawn(numberToFill);
+            }
+
+            public void Clear()
+            {
+                for (int i = SpawnedEntities.Count - 1; i >= 0; i--)
+                {
+                    BaseEntity entity = SpawnedEntities[i];
+                    if (entity != null)
+                        entity.Kill();
+                    SpawnedEntities.RemoveAt(i);
+                }
+            }
+
+            #endregion Spawn Lifecycle
+
+            #region Prefab Selection
 
             public string GetPrefab()
             {
@@ -387,6 +391,10 @@ namespace Oxide.Plugins
 
                 return null;
             }
+
+            #endregion Prefab Selection
+
+            #region Spawn Point Selection
 
             public SpawnPointComponent GetSpawnPoint(string prefabPath, out Vector3 position, out Quaternion rotation)
             {
@@ -417,7 +425,7 @@ namespace Oxide.Plugins
                 return null;
             }
 
-            #endregion 
+            #endregion Spawn Point Selection
         }
 
         #endregion Loot Spawner
@@ -466,6 +474,8 @@ namespace Oxide.Plugins
 
             #endregion Component Lifecycle
 
+            #region Position and Rotation Retrieval
+
             public Vector3 GetPosition()
             {
                 Vector3 targetPosition;
@@ -493,6 +503,10 @@ namespace Oxide.Plugins
 
                 return baseRotation;
             }
+
+            #endregion Position and Rotation Retrieval
+
+            #region Collision and Space Validation
 
             public bool HasSpaceToSpawn(string prefabPath, Vector3 position, Quaternion rotation)
             {
@@ -555,6 +569,8 @@ namespace Oxide.Plugins
             {
                 return PlayerUtil.HasPlayerNearby(Data.Position, Mathf.Max(Data.Radius, 2f));
             }
+
+            #endregion Collision and Space Validation
         }
 
         #endregion Spawn Point
@@ -1447,8 +1463,7 @@ namespace Oxide.Plugins
 
             foreach (PrefabData prefab in _spawnGroupBeingEdited.Prefabs)
             {
-                string shortPrefabName = GetShortPrefabName(prefab.Prefab);
-                spawnGroupInfo += $"\n<size=25>{shortPrefabName} (Weight: {prefab.Weight})</size>";
+                spawnGroupInfo += $"\n<size=25>{prefab.Prefab} (Weight: {prefab.Weight})</size>";
             }
 
             DrawUtil.Text(player, 15f, Color.white, center, spawnGroupInfo);
@@ -1468,6 +1483,7 @@ namespace Oxide.Plugins
 
         #region Localization
 
+        // TODO: Localize all messages.
         private class Lang
         {
             public const string NoPermission = "NoPermission";
