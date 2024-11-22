@@ -14,7 +14,6 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using UnityEngine;
-using static BasePlayer;
 using Random = UnityEngine.Random;
 
 namespace Oxide.Plugins
@@ -32,8 +31,9 @@ namespace Oxide.Plugins
         private SpawnGroupData _spawnGroupBeingEdited;
         private List<LootSpawnerComponent> _lootSpawners = new List<LootSpawnerComponent>();
 
+        public const int LAYER_LOOT_CRATES = Layers.Mask.Default;
         public const int LAYER_PLAYERS = Layers.Mask.Player_Server;
-        public const int LAYER_ENTITIES = Layers.Mask.Construction | Layers.Mask.Deployed;
+        public const int LAYER_BUILDINGS = Layers.Mask.Construction | Layers.Mask.Deployed;
         public const int LAYER_GROUND = Layers.Mask.Terrain | Layers.Mask.World | Layers.Mask.Default;
         
         private static readonly Dictionary<string, string> _lootContainerPrefabs = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
@@ -201,8 +201,9 @@ namespace Oxide.Plugins
         {
             if (_lootSpawners != null)
             {
-                foreach (LootSpawnerComponent lootSpawner in _lootSpawners)
+                for (int i = _lootSpawners.Count - 1; i >= 0; i--)
                 {
+                    LootSpawnerComponent lootSpawner = _lootSpawners[i];
                     if (lootSpawner != null)
                         lootSpawner.Destroy();
                 }
@@ -229,7 +230,7 @@ namespace Oxide.Plugins
 
         #endregion Oxide Hooks
 
-        #region Spawner
+        #region Loot Spawner
 
         public class LootSpawnerComponent : FacepunchBehaviour
         {
@@ -327,13 +328,13 @@ namespace Oxide.Plugins
 
             public void Clear()
             {
-                foreach (BaseEntity entity in SpawnedEntities)
+                for (int i = SpawnedEntities.Count - 1; i >= 0; i--)
                 {
+                    BaseEntity entity = SpawnedEntities[i];
                     if (entity != null)
                         entity.Kill();
+                    SpawnedEntities.RemoveAt(i);
                 }
-
-                SpawnedEntities.Clear();
             }
 
             public void Spawn(int numberToSpawn)
@@ -346,19 +347,8 @@ namespace Oxide.Plugins
                     if (string.IsNullOrEmpty(prefabPath))
                         continue;
 
-                    GameObject prefab = GameManager.server.FindPrefab(prefabPath);
-                    if (prefab == null)
+                    if (GetSpawnPoint(prefabPath, out Vector3 position, out Quaternion rotation) == null)
                         continue;
-
-                    SpawnPointComponent spawnPoint = GetRandomSpawnPoint();
-                    if (spawnPoint == null)
-                        continue;
-
-                    Vector3 position = spawnPoint.GetPosition();
-                    Quaternion rotation = spawnPoint.GetRotation();
-
-                    if (Data.RandomizeYRotation)
-                        rotation *= Quaternion.Euler(0, Random.Range(0f, 360f), 0);
 
                     BaseEntity entity = GameManager.server.CreateEntity(prefabPath, position, rotation);
                     if (entity == null)
@@ -391,23 +381,39 @@ namespace Oxide.Plugins
                 return Data.Prefabs.LastOrDefault().Prefab;
             }
 
-            public SpawnPointComponent GetRandomSpawnPoint()
+            public SpawnPointComponent GetSpawnPoint(string prefabPath, out Vector3 position, out Quaternion rotation)
             {
                 Shuffle(SpawnPoints);
 
                 foreach (SpawnPointComponent spawnPoint in SpawnPoints)
                 {
-                    if (!spawnPoint.HasPlayersIntersecting())
+                    if (spawnPoint.HasPlayersIntersecting())
+                        continue;
+
+                    for (int attempts = 0; attempts < 5; attempts++)
+                    {
+                        position = spawnPoint.GetPosition();
+                        rotation = spawnPoint.GetRotation();
+
+                        if (Data.RandomizeYRotation)
+                            rotation *= Quaternion.Euler(0, Random.Range(0f, 360f), 0);
+
+                        if (!spawnPoint.HasSpaceToSpawn(prefabPath, position, rotation))
+                            continue;
+
                         return spawnPoint;
+                    }
                 }
 
+                position = default;
+                rotation = default;
                 return null;
             }
 
             #endregion 
         }
 
-        #endregion Spawner
+        #endregion Loot Spawner
 
         #region Spawn Point
 
@@ -453,13 +459,6 @@ namespace Oxide.Plugins
 
             #endregion Component Lifecycle
 
-            public bool HasSpaceToSpawn()
-            {
-                // TODO: Check if there's sufficient space for spawning.
-                // This should include collision detection with other entities or obstacles in the spawn area.
-                return true;
-            }
-
             public Vector3 GetPosition()
             {
                 Vector3 targetPosition;
@@ -469,7 +468,7 @@ namespace Oxide.Plugins
                 else
                     targetPosition = Data.Position;
 
-                if (TerrainUtil.GetGroundInfo(targetPosition, out RaycastHit hit, Data.Radius, LAYER_GROUND | LAYER_ENTITIES))
+                if (TerrainUtil.GetGroundInfo(targetPosition, out RaycastHit hit, Data.Radius, LAYER_GROUND | LAYER_BUILDINGS))
                     targetPosition = hit.point;
 
                 return targetPosition;
@@ -479,7 +478,7 @@ namespace Oxide.Plugins
             {
                 Quaternion baseRotation = Quaternion.Euler(Data.Rotation);
 
-                if (TerrainUtil.GetGroundInfo(Data.Position, out RaycastHit hit, Data.Radius, LAYER_GROUND | LAYER_ENTITIES))
+                if (TerrainUtil.GetGroundInfo(Data.Position, out RaycastHit hit, 2f, LAYER_GROUND | LAYER_BUILDINGS))
                 {
                     Quaternion terrainAlignment = Quaternion.FromToRotation(Vector3.up, hit.normal);
                     return terrainAlignment * baseRotation;
@@ -488,9 +487,66 @@ namespace Oxide.Plugins
                 return baseRotation;
             }
 
-            public bool HasPlayersIntersecting(float checkDistance = 2f)
+            public bool HasSpaceToSpawn(string prefabPath, Vector3 position, Quaternion rotation)
             {
-                return PlayerUtil.HasPlayerNearby(Data.Position, checkDistance);
+                GameObject prefab = GameManager.server.FindPrefab(prefabPath);
+                if (prefab == null)
+                    return false;
+
+                BaseEntity prefabEntity = prefab.GetComponent<BaseEntity>();
+                if (prefabEntity == null)
+                    return false;
+
+                OBB entityBounds = new OBB(position, rotation, prefabEntity.bounds);
+
+                Vector3[] corners = new Vector3[8];
+                corners[0] = entityBounds.GetPoint(-1f, -1f, -1f);
+                corners[1] = entityBounds.GetPoint(-1f, -1f, 1f);
+                corners[2] = entityBounds.GetPoint(-1f, 1f, -1f);
+                corners[3] = entityBounds.GetPoint(-1f, 1f, 1f);
+                corners[4] = entityBounds.GetPoint(1f, -1f, -1f);
+                corners[5] = entityBounds.GetPoint(1f, -1f, 1f);
+                corners[6] = entityBounds.GetPoint(1f, 1f, -1f);
+                corners[7] = entityBounds.GetPoint(1f, 1f, 1f);
+
+                for (int i = 0; i < 4; i++)
+                {
+                    DrawUtil.Line(PlayerUtil.FindById(76561199104881804), 2f, Color.blue, corners[i], corners[(i + 1) % 4]);
+                    DrawUtil.Line(PlayerUtil.FindById(76561199104881804), 2f, Color.blue, corners[i + 4], corners[((i + 1) % 4) + 4]);
+                    DrawUtil.Line(PlayerUtil.FindById(76561199104881804), 2f, Color.blue, corners[i], corners[i + 4]);
+                }
+
+                Collider[] colliders = Physics.OverlapBox(
+                    entityBounds.position,
+                    entityBounds.extents,
+                    entityBounds.rotation,
+                    LAYER_LOOT_CRATES,
+                    QueryTriggerInteraction.Ignore
+                );
+
+                if (colliders.Length > 0)
+                {
+                    foreach (Collider collider in colliders)
+                    {
+                        Bounds colliderBounds = collider.bounds;
+                        Vector3 colliderCenter = colliderBounds.center;
+                        Vector3 colliderExtents = colliderBounds.extents;
+
+                        DrawUtil.Line(PlayerUtil.FindById(76561199104881804), 2f, Color.red, colliderCenter - colliderExtents, colliderCenter + colliderExtents);
+                    }
+
+                    DrawUtil.Text(PlayerUtil.FindById(76561199104881804), 2f, Color.red, position, "No Space");
+                    return false;
+                }
+
+                DrawUtil.Text(PlayerUtil.FindById(76561199104881804), 2f, Color.green, position, "Space Available");
+
+                return true;
+            }
+
+            public bool HasPlayersIntersecting()
+            {
+                return PlayerUtil.HasPlayerNearby(Data.Position, Mathf.Max(Data.Radius, 2f));
             }
         }
 
@@ -1142,7 +1198,7 @@ namespace Oxide.Plugins
                         else
                             position = conArgs.GetVector3(1, Vector3.zero);
 
-                        if (!TerrainUtil.GetGroundInfo(position, out RaycastHit hitInfo, 2f, LAYER_GROUND | LAYER_ENTITIES))
+                        if (!TerrainUtil.GetGroundInfo(position, out RaycastHit hitInfo, 2f, LAYER_GROUND | LAYER_BUILDINGS))
                         {
                             MessagePlayer(player, "The selected position is invalid. Please choose a position on a valid surface.");
                             return;
