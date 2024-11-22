@@ -14,6 +14,7 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using UnityEngine;
+using static BasePlayer;
 using Random = UnityEngine.Random;
 
 namespace Oxide.Plugins
@@ -28,7 +29,8 @@ namespace Oxide.Plugins
         private static Configuration _config;
         private System.Random _randomGenerator = new System.Random();
 
-        private SpawnGroupData _spawnGroupDataBeingEdited;
+        private SpawnGroupData _spawnGroupBeingEdited;
+        private List<LootSpawnerComponent> _lootSpawners = new List<LootSpawnerComponent>();
 
         public const int LAYER_PLAYERS = Layers.Mask.Player_Server;
         public const int LAYER_ENTITIES = Layers.Mask.Construction | Layers.Mask.Deployed;
@@ -98,6 +100,9 @@ namespace Oxide.Plugins
             [JsonProperty("Id")]
             public Guid Id { get; set; }
 
+            [JsonProperty("Active")]
+            public bool Active { get; set; }
+
             [JsonProperty("Maximum Population")]
             public int MaximumPopulation { get; set; }
 
@@ -106,6 +111,9 @@ namespace Oxide.Plugins
 
             [JsonProperty("Maximum Number To Spawn Per Tick")]
             public int MaximumNumberToSpawnPerTick { get; set; }
+
+            [JsonProperty("Initial Spawn")]
+            public bool InitialSpawn { get; set; }
 
             [JsonProperty("Minimum Respawn Delay Seconds")]
             public float MinimumRespawnDelaySeconds { get; set; }
@@ -159,13 +167,33 @@ namespace Oxide.Plugins
 
         private void Unload()
         {
+            if (_lootSpawners != null)
+            {
+                foreach (LootSpawnerComponent spawner in _lootSpawners)
+                {
+                    if (spawner != null)
+                        spawner.Destroy();
+                }
+
+                _lootSpawners.Clear();
+            }
+
             _config = null;
             _plugin = null;
         }
 
         private void OnServerInitialized(bool isStartup)
         {
-
+            string[] spawnGroupFiles = DataFileUtil.GetAllFilePaths();
+            foreach (string filePath in spawnGroupFiles)
+            {
+                SpawnGroupData spawnGroup = DataFileUtil.LoadIfExists<SpawnGroupData>(filePath);
+                if (spawnGroup != null)
+                {
+                    LootSpawnerComponent spawner = LootSpawnerComponent.Create(spawnGroup);
+                    _lootSpawners.Add(spawner);
+                }
+            }
         }
 
         #endregion Oxide Hooks
@@ -202,7 +230,6 @@ namespace Oxide.Plugins
             public void Initialize(SpawnGroupData data)
             {
                 Data = data;
-
                 foreach (SpawnPointData spawnPointData in Data.SpawnPoints)
                 {
                     SpawnPointComponent.Create(spawnPointData, this);
@@ -220,11 +247,18 @@ namespace Oxide.Plugins
 
             private void Start()
             {
-               // InvokeRepeating(new Action(RespawnScientists), _npcSpawnerConfig.InitialSpawnDelaySeconds, _npcSpawnerConfig.RespawnDelayMinutes * 60f);
+                float initialSpawnTime = GetNextSpawnTime();
+                if (Data.InitialSpawn)
+                    initialSpawnTime = 0f;
+
+                InvokeRepeating(nameof(TimedSpawn), initialSpawnTime, GetNextSpawnTime());
             }
 
             private void OnDestroy()
             {
+                CancelInvoke(nameof(TimedSpawn));
+                Clear();
+
                 for (int i = SpawnPoints.Count - 1; i >= 0; i--)
                 {
                     if (SpawnPoints[i] != null)
@@ -235,6 +269,48 @@ namespace Oxide.Plugins
             #endregion Component Lifecycle
 
             #region
+
+            private void TimedSpawn()
+            {
+                if (CurrentPopulation < Data.MaximumPopulation)
+                {
+                    int numberToSpawn = Random.Range(Data.MinimumNumberToSpawnPerTick, Data.MaximumNumberToSpawnPerTick + 1);
+                    Spawn(numberToSpawn);
+                }
+            }
+
+            private float GetNextSpawnTime()
+            {
+                return Random.Range(Data.MinimumRespawnDelaySeconds, Data.MaximumRespawnDelaySeconds);
+            }
+
+            public void Fill()
+            {
+                int numberToFill = Data.MaximumPopulation - CurrentPopulation;
+                Spawn(numberToFill);
+            }
+
+            public void Clear()
+            {
+                foreach (BaseEntity entity in SpawnedEntities)
+                {
+                    if (entity != null)
+                        entity.Kill();
+                }
+
+                SpawnedEntities.Clear();
+            }
+
+            public void Pause()
+            {
+                CancelInvoke(nameof(TimedSpawn));
+                Clear();
+            }
+
+            public void Resume()
+            {
+                Start();
+            }
 
             public void Spawn(int numberToSpawn)
             {
@@ -254,8 +330,8 @@ namespace Oxide.Plugins
                     if (spawnPoint == null)
                         continue;
 
-                    Vector3 position = spawnPoint.GetPosition(randomize: )
-                    Quaternion rotation = Quaternion.Euler(spawnPoint.Data.Rotation);
+                    Vector3 position = spawnPoint.GetPosition();
+                    Quaternion rotation = spawnPoint.GetRotation();
 
                     if (Data.RandomizeYRotation)
                         rotation *= Quaternion.Euler(0, Random.Range(0f, 360f), 0);
@@ -264,6 +340,7 @@ namespace Oxide.Plugins
                     if (entity == null)
                         continue;
 
+                    // TODO: Consider parenting the spawned entity if it's placed on another entity.
                     entity.Spawn();
                     SpawnedEntities.Add(entity);
                 }
@@ -300,7 +377,7 @@ namespace Oxide.Plugins
                         return spawnPoint;
                 }
 
-                return SpawnPoints.FirstOrDefault();
+                return null;
             }
 
             #endregion 
@@ -333,6 +410,7 @@ namespace Oxide.Plugins
             {
                 Data = data;
                 LootSpawner = lootSpawner;
+                LootSpawner.SpawnPoints.Add(this);
             }
 
             public void Destroy()
@@ -346,10 +424,17 @@ namespace Oxide.Plugins
 
             private void OnDestroy()
             {
-                
+                LootSpawner.SpawnPoints.Remove(this);
             }
 
             #endregion Component Lifecycle
+
+            public bool HasSpaceToSpawn()
+            {
+                // TODO: Check if there's sufficient space for spawning.
+                // This should include collision detection with other entities or obstacles in the spawn area.
+                return true;
+            }
 
             public Vector3 GetPosition()
             {
@@ -366,9 +451,22 @@ namespace Oxide.Plugins
                 return targetPosition;
             }
 
+            public Quaternion GetRotation()
+            {
+                Quaternion baseRotation = Quaternion.Euler(Data.Rotation);
+
+                if (TerrainUtil.GetGroundInfo(Data.Position, out RaycastHit hit, Data.Radius, LAYER_GROUND | LAYER_ENTITIES))
+                {
+                    Quaternion terrainAlignment = Quaternion.FromToRotation(Vector3.up, hit.normal);
+                    return terrainAlignment * baseRotation;
+                }
+
+                return baseRotation;
+            }
+
             public bool HasPlayersIntersecting(float checkDistance = 2f)
             {
-                return !PlayerUtil.HasPlayerNearby(Data.Position, checkDistance);
+                return PlayerUtil.HasPlayerNearby(Data.Position, checkDistance);
             }
         }
 
@@ -376,7 +474,7 @@ namespace Oxide.Plugins
 
         #region Helper Functions
 
-        public static void Shuffle<T>(List<T> list)
+        private static void Shuffle<T>(List<T> list)
         {
             int remainingItems = list.Count;
 
@@ -391,21 +489,29 @@ namespace Oxide.Plugins
             }
         }
 
-        private string FindPrefabPath(string shortPrefabName)
+        private static string FindPrefabPath(string shortPrefabName)
         {
             foreach (string prefabPath in GameManifest.Current.entities)
             {
-                // Extract the filename from the prefab path
                 string prefabFileName = prefabPath.Substring(prefabPath.LastIndexOf("/") + 1).Replace(".prefab", "");
 
-                // Match with the short prefab name (case-insensitive)
                 if (string.Equals(prefabFileName, shortPrefabName, StringComparison.OrdinalIgnoreCase))
-                {
-                    return prefabPath; // Return the full prefab path
-                }
+                    return prefabPath;
             }
 
-            return null; // Return null if no match is found
+            return null;
+        }
+
+        private static string GetShortPrefabName(string fullPrefabPath)
+        {
+            if (string.IsNullOrEmpty(fullPrefabPath))
+                return string.Empty;
+
+            int lastSlashIndex = fullPrefabPath.LastIndexOf("/");
+            if (lastSlashIndex == -1)
+                return fullPrefabPath.Replace(".prefab", "");
+
+            return fullPrefabPath.Substring(lastSlashIndex + 1).Replace(".prefab", "");
         }
 
         #endregion Helper Functions
@@ -690,6 +796,8 @@ namespace Oxide.Plugins
             /// cls.spawngroup edit <spawnGroupAlias>
             /// cls.spawngroup remove
             /// cls.spawngroup set <property> <value>
+            /// - active
+            /// - initialspawn
             /// - maxpop
             /// - minspawn
             /// - maxspawn
@@ -755,16 +863,18 @@ namespace Oxide.Plugins
                         {
                             Alias = alias,
                             Id = Guid.NewGuid(),
+                            Active = true,
                             MaximumPopulation = 5,
                             MinimumNumberToSpawnPerTick = 1,
                             MaximumNumberToSpawnPerTick = 2,
-                            MinimumRespawnDelaySeconds = 10f,
-                            MaximumRespawnDelaySeconds = 20f,
+                            InitialSpawn = true,
+                            MinimumRespawnDelaySeconds = 30f,
+                            MaximumRespawnDelaySeconds = 60f,
                             RandomizeYRotation = true
                         };
 
                         DataFileUtil.Save(filePath, newGroup);
-                        _spawnGroupDataBeingEdited = newGroup;
+                        _spawnGroupBeingEdited = newGroup;
 
                         MessagePlayer(player, $"Spawn group '{alias}' created and selected for editing.");
                         break;
@@ -786,7 +896,7 @@ namespace Oxide.Plugins
                             return;
                         }
 
-                        _spawnGroupDataBeingEdited = group;
+                        _spawnGroupBeingEdited = group;
                         MessagePlayer(player, $"Spawn group '{alias}' selected for editing.");
 
                         VisualizeSpawnGroup(player);
@@ -794,23 +904,23 @@ namespace Oxide.Plugins
                     }
                 case "remove":
                     {
-                        if (_spawnGroupDataBeingEdited == null)
+                        if (_spawnGroupBeingEdited == null)
                         {
                             MessagePlayer(player, "You must edit a spawn group before removing it.");
                             return;
                         }
 
-                        string alias = _spawnGroupDataBeingEdited.Alias;
+                        string alias = _spawnGroupBeingEdited.Alias;
                         string filePath = DataFileUtil.GetFilePath(alias);
                         DataFileUtil.Delete(filePath);
-                        _spawnGroupDataBeingEdited = null;
+                        _spawnGroupBeingEdited = null;
 
                         MessagePlayer(player, $"Spawn group '{alias}' removed.");
                         break;
                     }
                 case "set":
                     {
-                        if (_spawnGroupDataBeingEdited == null)
+                        if (_spawnGroupBeingEdited == null)
                         {
                             MessagePlayer(player, "You must edit a spawn group before setting its properties.");
                             return;
@@ -828,10 +938,34 @@ namespace Oxide.Plugins
 
                         switch (property)
                         {
+                            case "active":
+                                if (bool.TryParse(value, out bool active))
+                                {
+                                    _spawnGroupBeingEdited.Active = active;
+                                }
+                                else
+                                {
+                                    MessagePlayer(player, "Invalid value for 'Active'. Please enter 'true' or 'false'.");
+                                    isValueValid = false;
+                                }
+                                break;
+
+                            case "initialspawn":
+                                if (bool.TryParse(value, out bool initialSpawn))
+                                {
+                                    _spawnGroupBeingEdited.InitialSpawn = initialSpawn;
+                                }
+                                else
+                                {
+                                    MessagePlayer(player, "Invalid value for 'InitialSpawn'. Please enter 'true' or 'false'.");
+                                    isValueValid = false;
+                                }
+                                break;
+
                             case "maxpop":
                                 if (int.TryParse(value, out int maxPopulation) && maxPopulation >= 0)
                                 {
-                                    _spawnGroupDataBeingEdited.MaximumPopulation = maxPopulation;
+                                    _spawnGroupBeingEdited.MaximumPopulation = maxPopulation;
                                 }
                                 else
                                 {
@@ -843,7 +977,7 @@ namespace Oxide.Plugins
                             case "minspawn":
                                 if (int.TryParse(value, out int minSpawn) && minSpawn >= 0)
                                 {
-                                    _spawnGroupDataBeingEdited.MinimumNumberToSpawnPerTick = minSpawn;
+                                    _spawnGroupBeingEdited.MinimumNumberToSpawnPerTick = minSpawn;
                                 }
                                 else
                                 {
@@ -853,9 +987,9 @@ namespace Oxide.Plugins
                                 break;
 
                             case "maxspawn":
-                                if (int.TryParse(value, out int maxSpawn) && maxSpawn >= _spawnGroupDataBeingEdited.MinimumNumberToSpawnPerTick)
+                                if (int.TryParse(value, out int maxSpawn) && maxSpawn >= _spawnGroupBeingEdited.MinimumNumberToSpawnPerTick)
                                 {
-                                    _spawnGroupDataBeingEdited.MaximumNumberToSpawnPerTick = maxSpawn;
+                                    _spawnGroupBeingEdited.MaximumNumberToSpawnPerTick = maxSpawn;
                                 }
                                 else
                                 {
@@ -867,7 +1001,7 @@ namespace Oxide.Plugins
                             case "mindelay":
                                 if (float.TryParse(value, out float minDelay) && minDelay > 0)
                                 {
-                                    _spawnGroupDataBeingEdited.MinimumRespawnDelaySeconds = minDelay;
+                                    _spawnGroupBeingEdited.MinimumRespawnDelaySeconds = minDelay;
                                 }
                                 else
                                 {
@@ -877,9 +1011,9 @@ namespace Oxide.Plugins
                                 break;
 
                             case "maxdelay":
-                                if (float.TryParse(value, out float maxDelay) && maxDelay >= _spawnGroupDataBeingEdited.MinimumRespawnDelaySeconds)
+                                if (float.TryParse(value, out float maxDelay) && maxDelay >= _spawnGroupBeingEdited.MinimumRespawnDelaySeconds)
                                 {
-                                    _spawnGroupDataBeingEdited.MaximumRespawnDelaySeconds = maxDelay;
+                                    _spawnGroupBeingEdited.MaximumRespawnDelaySeconds = maxDelay;
                                 }
                                 else
                                 {
@@ -891,7 +1025,7 @@ namespace Oxide.Plugins
                             case "randrot":
                                 if (bool.TryParse(value, out bool randomizeYRotation))
                                 {
-                                    _spawnGroupDataBeingEdited.RandomizeYRotation = randomizeYRotation;
+                                    _spawnGroupBeingEdited.RandomizeYRotation = randomizeYRotation;
                                 }
                                 else
                                 {
@@ -907,8 +1041,8 @@ namespace Oxide.Plugins
 
                         if (isValueValid)
                         {
-                            DataFileUtil.Save(DataFileUtil.GetFilePath(_spawnGroupDataBeingEdited.Alias), _spawnGroupDataBeingEdited);
-                            MessagePlayer(player, $"Property '{property}' set to '{value}' for spawn group '{_spawnGroupDataBeingEdited.Alias}'.");
+                            DataFileUtil.Save(DataFileUtil.GetFilePath(_spawnGroupBeingEdited.Alias), _spawnGroupBeingEdited);
+                            MessagePlayer(player, $"Property '{property}' set to '{value}' for spawn group '{_spawnGroupBeingEdited.Alias}'.");
                         }
                         break;
                     }
@@ -938,7 +1072,7 @@ namespace Oxide.Plugins
                 return;
             }
 
-            if (_spawnGroupDataBeingEdited == null)
+            if (_spawnGroupBeingEdited == null)
             {
                 MessagePlayer(player, "You must edit a spawn group before managing spawn points.");
                 return;
@@ -955,25 +1089,31 @@ namespace Oxide.Plugins
                             return;
                         }
 
-                        Vector3 position = conArgs.GetVector3(1, Vector3.zero);
-                        if (conArgs.GetString(1).ToLower() == "here" && player != null)
-                        {
-                            if (TerrainUtil.GetGroundInfo(player.transform.position, out RaycastHit hitInfo, 2f, LAYER_GROUND | LAYER_ENTITIES))
-                                position = hitInfo.point;
-                            else
-                                position = player.ServerPosition;
-                        }
+                        Vector3 position = Vector3.zero;
 
-                        if (position == Vector3.zero)
+                        if (conArgs.GetString(1).ToLower() == "here" && player != null)
+                            position = player.transform.position;
+                        else
+                            position = conArgs.GetVector3(1, Vector3.zero);
+
+                        if (!TerrainUtil.GetGroundInfo(position, out RaycastHit hitInfo, 2f, LAYER_GROUND | LAYER_ENTITIES))
                         {
-                            MessagePlayer(player, "Invalid position. Please provide a valid position or type 'here'.");
+                            MessagePlayer(player, "The selected position is invalid. Please choose a position on a valid surface.");
                             return;
                         }
 
-                        float radius = 1f;
-                        if (args.Length > 2 && (!float.TryParse(args[2], out radius) || radius <= 0))
+                        position = hitInfo.point;
+
+                        float radius = 0f;
+                        if (args.Length > 2 && !float.TryParse(args[2], out radius))
                         {
-                            MessagePlayer(player, "Invalid radius. Please specify a positive value.");
+                            MessagePlayer(player, "Invalid radius. Please specify a valid number.");
+                            return;
+                        }
+
+                        if (radius < 0)
+                        {
+                            MessagePlayer(player, "Radius cannot be negative.");
                             return;
                         }
 
@@ -985,8 +1125,8 @@ namespace Oxide.Plugins
                             Radius = radius
                         };
 
-                        _spawnGroupDataBeingEdited.SpawnPoints.Add(newSpawnPoint);
-                        DataFileUtil.Save(DataFileUtil.GetFilePath(_spawnGroupDataBeingEdited.Alias), _spawnGroupDataBeingEdited);
+                        _spawnGroupBeingEdited.SpawnPoints.Add(newSpawnPoint);
+                        DataFileUtil.Save(DataFileUtil.GetFilePath(_spawnGroupBeingEdited.Alias), _spawnGroupBeingEdited);
 
                         VisualizeSpawnGroup(player);
                         MessagePlayer(player, $"Spawn point added with id '{spawnPointId}', radius {radius} at position {position}.");
@@ -998,7 +1138,7 @@ namespace Oxide.Plugins
                         if (args.Length > 1)
                         {
                             string spawnPointId = args[1];
-                            var spawnPointToRemove = _spawnGroupDataBeingEdited.SpawnPoints
+                            var spawnPointToRemove = _spawnGroupBeingEdited.SpawnPoints
                                 .FirstOrDefault(sp => sp.Id.Equals(spawnPointId, StringComparison.OrdinalIgnoreCase));
 
                             if (spawnPointToRemove == null)
@@ -1007,8 +1147,8 @@ namespace Oxide.Plugins
                                 return;
                             }
 
-                            _spawnGroupDataBeingEdited.SpawnPoints.Remove(spawnPointToRemove);
-                            DataFileUtil.Save(DataFileUtil.GetFilePath(_spawnGroupDataBeingEdited.Alias), _spawnGroupDataBeingEdited);
+                            _spawnGroupBeingEdited.SpawnPoints.Remove(spawnPointToRemove);
+                            DataFileUtil.Save(DataFileUtil.GetFilePath(_spawnGroupBeingEdited.Alias), _spawnGroupBeingEdited);
 
                             VisualizeSpawnGroup(player);
                             MessagePlayer(player, $"Spawn point with id '{spawnPointId}' removed.");
@@ -1018,7 +1158,7 @@ namespace Oxide.Plugins
                         Vector3 playerPosition = player.transform.position;
                         float threshold = 1f;
 
-                        var closestSpawnPoint = _spawnGroupDataBeingEdited.SpawnPoints
+                        var closestSpawnPoint = _spawnGroupBeingEdited.SpawnPoints
                             .OrderBy(sp => Vector3.Distance(sp.Position, playerPosition))
                             .FirstOrDefault(sp => Vector3.Distance(sp.Position, playerPosition) <= threshold);
 
@@ -1030,8 +1170,8 @@ namespace Oxide.Plugins
 
                         string removedId = closestSpawnPoint.Id;
 
-                        _spawnGroupDataBeingEdited.SpawnPoints.Remove(closestSpawnPoint);
-                        DataFileUtil.Save(DataFileUtil.GetFilePath(_spawnGroupDataBeingEdited.Alias), _spawnGroupDataBeingEdited);
+                        _spawnGroupBeingEdited.SpawnPoints.Remove(closestSpawnPoint);
+                        DataFileUtil.Save(DataFileUtil.GetFilePath(_spawnGroupBeingEdited.Alias), _spawnGroupBeingEdited);
 
                         VisualizeSpawnGroup(player);
                         MessagePlayer(player, $"Spawn point with id '{removedId}' at position {closestSpawnPoint.Position} removed.");
@@ -1058,98 +1198,112 @@ namespace Oxide.Plugins
                 return;
 
             string[] args = conArgs.Args;
-            if (args == null || args.Length == 0)
+            if (args == null || args.Length < 2)
             {
-                MessagePlayer(player, "Usage: cls.prefab <add/remove> <shortPrefabName> [weight]");
+                MessagePlayer(player, "Usage: cls.prefab <add/remove> <shortPrefabName1> [weight1] <shortPrefabName2> [weight2] ...");
                 return;
             }
 
-            if (_spawnGroupDataBeingEdited == null)
+            if (_spawnGroupBeingEdited == null)
             {
                 MessagePlayer(player, "You must edit a spawn group before managing prefabs.");
                 return;
             }
 
-            string subCommand = args[0];
+            string subCommand = args[0].ToLower();
             switch (subCommand)
             {
                 case "add":
                     {
-                        if (args.Length < 2)
+                        List<string> addedPrefabs = new List<string>();
+                        for (int i = 1; i < args.Length; i += 2)
                         {
-                            MessagePlayer(player, "Usage: cls.prefab add <shortPrefabName> [weight]");
-                            return;
+                            string shortPrefabName = args[i];
+                            string fullPrefabPath = FindPrefabPath(shortPrefabName)?.ToLowerInvariant();
+
+                            if (string.IsNullOrEmpty(fullPrefabPath))
+                            {
+                                MessagePlayer(player, $"Prefab '{shortPrefabName}' not found.");
+                                continue;
+                            }
+
+                            if (_spawnGroupBeingEdited.Prefabs.Any(p => p.Prefab.Equals(fullPrefabPath, StringComparison.OrdinalIgnoreCase)))
+                            {
+                                MessagePlayer(player, $"Prefab '{shortPrefabName}' is already in the spawn group.");
+                                continue;
+                            }
+
+                            int weight = 1;
+                            if (i + 1 < args.Length && (!int.TryParse(args[i + 1], out weight) || weight <= 0))
+                            {
+                                MessagePlayer(player, $"Invalid weight for prefab '{shortPrefabName}'. Defaulting to weight 1.");
+                                weight = 1;
+                            }
+
+                            PrefabData newPrefab = new PrefabData
+                            {
+                                Prefab = fullPrefabPath,
+                                Weight = weight
+                            };
+
+                            _spawnGroupBeingEdited.Prefabs.Add(newPrefab);
+                            addedPrefabs.Add($"{shortPrefabName} (weight {weight})");
                         }
 
-                        string shortPrefabName = args[1];
-                        string fullPrefabPath = FindPrefabPath(shortPrefabName);
-
-                        if (string.IsNullOrEmpty(fullPrefabPath))
-                        {
-                            MessagePlayer(player, $"Prefab '{shortPrefabName}' not found.");
-                            return;
-                        }
-
-                        fullPrefabPath = fullPrefabPath.ToLowerInvariant();
-
-                        if (_spawnGroupDataBeingEdited.Prefabs.Any(p => p.Prefab.Equals(fullPrefabPath, StringComparison.OrdinalIgnoreCase)))
-                        {
-                            MessagePlayer(player, $"Prefab '{shortPrefabName}' is already in the spawn group.");
-                            return;
-                        }
-
-                        int weight = 1; // Default weight
-                        if (args.Length > 2 && (!int.TryParse(args[2], out weight) || weight <= 0))
-                        {
-                            MessagePlayer(player, "Invalid weight. Please specify a positive integer.");
-                            return;
-                        }
-
-                        PrefabData newPrefab = new PrefabData
-                        {
-                            Prefab = fullPrefabPath,
-                            Weight = weight
-                        };
-
-                        _spawnGroupDataBeingEdited.Prefabs.Add(newPrefab);
-                        DataFileUtil.Save(DataFileUtil.GetFilePath(_spawnGroupDataBeingEdited.Alias), _spawnGroupDataBeingEdited);
-
+                        DataFileUtil.Save(DataFileUtil.GetFilePath(_spawnGroupBeingEdited.Alias), _spawnGroupBeingEdited);
                         VisualizeSpawnGroup(player);
-                        MessagePlayer(player, $"Prefab '{shortPrefabName}' added to the spawn group with weight {weight}.");
+
+                        if (addedPrefabs.Count > 0)
+                        {
+                            MessagePlayer(player, $"Added prefabs: {string.Join(", ", addedPrefabs)} to the spawn group.");
+                        }
+                        else
+                        {
+                            MessagePlayer(player, "No prefabs were added.");
+                        }
+
                         break;
                     }
 
                 case "remove":
                     {
-                        if (args.Length < 2)
+                        List<string> removedPrefabs = new List<string>();
+                        for (int i = 1; i < args.Length; i++)
                         {
-                            MessagePlayer(player, "Usage: cls.prefab remove <shortPrefabName>");
-                            return;
+                            string shortPrefabName = args[i];
+                            string fullPrefabPath = FindPrefabPath(shortPrefabName)?.ToLowerInvariant();
+
+                            if (string.IsNullOrEmpty(fullPrefabPath))
+                            {
+                                MessagePlayer(player, $"Prefab '{shortPrefabName}' not found.");
+                                continue;
+                            }
+
+                            var prefabToRemove = _spawnGroupBeingEdited.Prefabs
+                                .FirstOrDefault(p => p.Prefab.Equals(fullPrefabPath, StringComparison.OrdinalIgnoreCase));
+
+                            if (prefabToRemove == null)
+                            {
+                                MessagePlayer(player, $"Prefab '{shortPrefabName}' not found in the spawn group.");
+                                continue;
+                            }
+
+                            _spawnGroupBeingEdited.Prefabs.Remove(prefabToRemove);
+                            removedPrefabs.Add(shortPrefabName);
                         }
 
-                        string shortPrefabName = args[1];
-                        string fullPrefabPath = FindPrefabPath(shortPrefabName)?.ToLowerInvariant(); // Ensure lowercase
-
-                        if (string.IsNullOrEmpty(fullPrefabPath))
-                        {
-                            MessagePlayer(player, $"Prefab '{shortPrefabName}' not found.");
-                            return;
-                        }
-
-                        var prefabToRemove = _spawnGroupDataBeingEdited.Prefabs
-                            .FirstOrDefault(p => p.Prefab.Equals(fullPrefabPath, StringComparison.OrdinalIgnoreCase));
-
-                        if (prefabToRemove == null)
-                        {
-                            MessagePlayer(player, $"Prefab '{shortPrefabName}' not found in the spawn group.");
-                            return;
-                        }
-
-                        _spawnGroupDataBeingEdited.Prefabs.Remove(prefabToRemove);
-                        DataFileUtil.Save(DataFileUtil.GetFilePath(_spawnGroupDataBeingEdited.Alias), _spawnGroupDataBeingEdited);
-
+                        DataFileUtil.Save(DataFileUtil.GetFilePath(_spawnGroupBeingEdited.Alias), _spawnGroupBeingEdited);
                         VisualizeSpawnGroup(player);
-                        MessagePlayer(player, $"Prefab '{shortPrefabName}' removed from the spawn group.");
+
+                        if (removedPrefabs.Count > 0)
+                        {
+                            MessagePlayer(player, $"Removed prefabs: {string.Join(", ", removedPrefabs)} from the spawn group.");
+                        }
+                        else
+                        {
+                            MessagePlayer(player, "No prefabs were removed.");
+                        }
+
                         break;
                     }
 
@@ -1165,37 +1319,44 @@ namespace Oxide.Plugins
 
         private void VisualizeSpawnGroup(BasePlayer player)
         {
-            if (_spawnGroupDataBeingEdited == null || _spawnGroupDataBeingEdited.SpawnPoints.Count == 0)
+            if (_spawnGroupBeingEdited == null || _spawnGroupBeingEdited.SpawnPoints.Count == 0)
                 return;
 
             Vector3 center = Vector3.zero;
-            foreach (SpawnPointData spawnPoint in _spawnGroupDataBeingEdited.SpawnPoints)
+            foreach (SpawnPointData spawnPoint in _spawnGroupBeingEdited.SpawnPoints)
             {
                 center += spawnPoint.Position;
             }
-            center /= _spawnGroupDataBeingEdited.SpawnPoints.Count;
-            center.y += 3f;
+            center /= _spawnGroupBeingEdited.SpawnPoints.Count;
+            center.y += 15f;
 
-            string spawnGroupInfo = $"<size=30>Spawn Group: {_spawnGroupDataBeingEdited.Alias}</size>\n" +
-                               $"<size=25>Maximum Population: {_spawnGroupDataBeingEdited.MaximumPopulation}</size>\n" +
-                               $"<size=25>Minimum Number To Spawn Per Tick: {_spawnGroupDataBeingEdited.MinimumNumberToSpawnPerTick}</size>\n" +
-                               $"<size=25>Maximum Number To Spawn Per Tick: {_spawnGroupDataBeingEdited.MaximumNumberToSpawnPerTick}</size>\n" +
-                               $"<size=25>Minimum Respawn Delay Seconds: {_spawnGroupDataBeingEdited.MinimumRespawnDelaySeconds}</size>\n" +
-                               $"<size=25>Maximum Respawn Delay Seconds: {_spawnGroupDataBeingEdited.MaximumRespawnDelaySeconds}</size>\n" +
-                               $"<size=25>Randomize Y Rotation: {_spawnGroupDataBeingEdited.RandomizeYRotation}</size>\n" +
-                               $"<size=25>Total Spawn Points: {_spawnGroupDataBeingEdited.SpawnPoints.Count}</size>\n" +
-                               $"<size=25>Total Prefabs: {_spawnGroupDataBeingEdited.Prefabs.Count}</size>";
+            string spawnGroupInfo = $"<size=30>Spawn Group: {_spawnGroupBeingEdited.Alias}</size>\n" +
+                                    $"<size=25>Maximum Population: {_spawnGroupBeingEdited.MaximumPopulation}</size>\n" +
+                                    $"<size=25>Minimum Number To Spawn Per Tick: {_spawnGroupBeingEdited.MinimumNumberToSpawnPerTick}</size>\n" +
+                                    $"<size=25>Maximum Number To Spawn Per Tick: {_spawnGroupBeingEdited.MaximumNumberToSpawnPerTick}</size>\n" +
+                                    $"<size=25>Minimum Respawn Delay Seconds: {_spawnGroupBeingEdited.MinimumRespawnDelaySeconds}</size>\n" +
+                                    $"<size=25>Maximum Respawn Delay Seconds: {_spawnGroupBeingEdited.MaximumRespawnDelaySeconds}</size>\n" +
+                                    $"<size=25>Randomize Y Rotation: {_spawnGroupBeingEdited.RandomizeYRotation}</size>\n" +
+                                    $"<size=25>Total Spawn Points: {_spawnGroupBeingEdited.SpawnPoints.Count}</size>\n" +
+                                    $"<size=25>Total Prefabs: {_spawnGroupBeingEdited.Prefabs.Count}</size>\n\n" +
+                                    $"<size=30>Prefabs:</size>";
 
-            DrawUtil.Text(player, 20f, Color.white, center, spawnGroupInfo);
-
-            foreach (SpawnPointData spawnPoint in _spawnGroupDataBeingEdited.SpawnPoints)
+            foreach (PrefabData prefab in _spawnGroupBeingEdited.Prefabs)
             {
-                DrawUtil.Sphere(player, 20f, Color.green, spawnPoint.Position, spawnPoint.Radius);
-                DrawUtil.Arrow(player, 20f, Color.black, center, spawnPoint.Position, 0.5f);
+                string shortPrefabName = GetShortPrefabName(prefab.Prefab);
+                spawnGroupInfo += $"\n<size=25>{shortPrefabName} (Weight: {prefab.Weight})</size>";
+            }
+
+            DrawUtil.Text(player, 15f, Color.white, center, spawnGroupInfo);
+
+            foreach (SpawnPointData spawnPoint in _spawnGroupBeingEdited.SpawnPoints)
+            {
+                DrawUtil.Sphere(player, 15f, Color.green, spawnPoint.Position, spawnPoint.Radius);
+                DrawUtil.Arrow(player, 15f, Color.black, center, spawnPoint.Position, 0.5f);
 
                 string spawnPointInfo = $"<size=30>Spawn Point</size>\n" +
-                    $"<size=25>{spawnPoint.Id}</size>";
-                DrawUtil.Text(player, 20f, Color.white, spawnPoint.Position, spawnPointInfo);
+                                        $"<size=25>{spawnPoint.Id}</size>";
+                DrawUtil.Text(player, 15f, Color.white, spawnPoint.Position, spawnPointInfo);
             }
         }
 
