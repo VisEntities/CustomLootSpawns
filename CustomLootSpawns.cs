@@ -35,6 +35,38 @@ namespace Oxide.Plugins
         public const int LAYER_PLAYERS = Layers.Mask.Player_Server;
         public const int LAYER_ENTITIES = Layers.Mask.Construction | Layers.Mask.Deployed;
         public const int LAYER_GROUND = Layers.Mask.Terrain | Layers.Mask.World | Layers.Mask.Default;
+        
+        private static readonly Dictionary<string, string> _lootContainerPrefabs = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            {"junk", "assets/bundled/prefabs/radtown/crate_normal_2.prefab"},
+            {"military", "assets/bundled/prefabs/radtown/crate_normal.prefab"},
+            {"elite", "assets/bundled/prefabs/radtown/crate_elite.prefab"},
+            {"medical", "assets/bundled/prefabs/radtown/crate_normal_2_medical.prefab"},
+            {"food", "assets/bundled/prefabs/radtown/crate_normal_2_food.prefab"},
+            {"ammo", "assets/bundled/prefabs/radtown/dmloot/dm ammo.prefab"},
+            {"explosives", "assets/bundled/prefabs/radtown/dmloot/dm c4.prefab"},
+            {"foodbox", "assets/bundled/prefabs/radtown/foodbox.prefab"},
+            {"tools", "assets/bundled/prefabs/radtown/crate_tools.prefab"},
+            {"vehicleparts", "assets/bundled/prefabs/radtown/vehicle_parts.prefab"},
+
+            {"waterammo", "assets/bundled/prefabs/radtown/underwater_labs/crate_ammunition.prefab"},
+            {"watermedical", "assets/bundled/prefabs/radtown/underwater_labs/crate_medical.prefab"},
+            {"waterfood", "assets/bundled/prefabs/radtown/underwater_labs/crate_food_1.prefab"},
+            {"waterfoodbox", "assets/bundled/prefabs/radtown/underwater_labs/crate_food_2.prefab"},
+            {"waterfuel", "assets/bundled/prefabs/radtown/underwater_labs/crate_fuel.prefab"},
+            {"watertechparts", "assets/bundled/prefabs/radtown/underwater_labs/tech_parts_2.prefab"},
+
+            {"hackable", "assets/prefabs/deployable/chinooklockedcrate/codelockedhackablecrate.prefab"},
+            {"hackableoilrig", "assets/prefabs/deployable/chinooklockedcrate/codelockedhackablecrate_oilrig.prefab"},
+            {"bradley", "assets/prefabs/npc/m2bradley/bradley_crate.prefab"},
+            {"patrolheli", "assets/prefabs/npc/patrol helicopter/heli_crate.prefab"},
+            {"supplydrop", "assets/prefabs/misc/supply drop/supply_drop.prefab"},
+
+            {"barrel", "assets/bundled/prefabs/radtown/loot_barrel_2.prefab"},
+            {"barrelblue", "assets/bundled/prefabs/radtown/loot_barrel_1.prefab"},
+            {"barreloil", "assets/bundled/prefabs/radtown/oil_barrel.prefab"},
+            {"barreldiesel", "assets/prefabs/resource/diesel barrel/diesel_barrel_world.prefab"},
+        };
 
         #endregion Fields
 
@@ -169,10 +201,10 @@ namespace Oxide.Plugins
         {
             if (_lootSpawners != null)
             {
-                foreach (LootSpawnerComponent spawner in _lootSpawners)
+                foreach (LootSpawnerComponent lootSpawner in _lootSpawners)
                 {
-                    if (spawner != null)
-                        spawner.Destroy();
+                    if (lootSpawner != null)
+                        lootSpawner.Destroy();
                 }
 
                 _lootSpawners.Clear();
@@ -190,8 +222,7 @@ namespace Oxide.Plugins
                 SpawnGroupData spawnGroup = DataFileUtil.LoadIfExists<SpawnGroupData>(filePath);
                 if (spawnGroup != null)
                 {
-                    LootSpawnerComponent spawner = LootSpawnerComponent.Create(spawnGroup);
-                    _lootSpawners.Add(spawner);
+                    LootSpawnerComponent.Create(spawnGroup);
                 }
             }
         }
@@ -234,6 +265,8 @@ namespace Oxide.Plugins
                 {
                     SpawnPointComponent.Create(spawnPointData, this);
                 }
+
+                _plugin._lootSpawners.Add(this);
             }
 
             public void Destroy()
@@ -264,6 +297,8 @@ namespace Oxide.Plugins
                     if (SpawnPoints[i] != null)
                         SpawnPoints[i].Destroy();
                 }
+
+                _plugin._lootSpawners.Remove(this);
             }
 
             #endregion Component Lifecycle
@@ -299,17 +334,6 @@ namespace Oxide.Plugins
                 }
 
                 SpawnedEntities.Clear();
-            }
-
-            public void Pause()
-            {
-                CancelInvoke(nameof(TimedSpawn));
-                Clear();
-            }
-
-            public void Resume()
-            {
-                Start();
             }
 
             public void Spawn(int numberToSpawn)
@@ -896,9 +920,12 @@ namespace Oxide.Plugins
                             return;
                         }
 
+                        LootSpawnerComponent lootSpawner = _lootSpawners.FirstOrDefault(ls => ls.Data.Alias.Equals(alias, StringComparison.OrdinalIgnoreCase));
+                        if (lootSpawner != null)
+                            lootSpawner.Destroy();
+
                         _spawnGroupBeingEdited = group;
                         MessagePlayer(player, $"Spawn group '{alias}' selected for editing.");
-
                         VisualizeSpawnGroup(player);
                         break;
                     }
@@ -1044,6 +1071,25 @@ namespace Oxide.Plugins
                             DataFileUtil.Save(DataFileUtil.GetFilePath(_spawnGroupBeingEdited.Alias), _spawnGroupBeingEdited);
                             MessagePlayer(player, $"Property '{property}' set to '{value}' for spawn group '{_spawnGroupBeingEdited.Alias}'.");
                         }
+                        break;
+                    }
+                case "done":
+                    {
+                        if (_spawnGroupBeingEdited == null)
+                        {
+                            MessagePlayer(player, "You must edit a spawn group before finishing editing.");
+                            return;
+                        }
+
+                        string alias = _spawnGroupBeingEdited.Alias;
+                        string filePath = DataFileUtil.GetFilePath(alias);
+
+                        DataFileUtil.Save(filePath, _spawnGroupBeingEdited);
+
+                        LootSpawnerComponent.Create(_spawnGroupBeingEdited);
+
+                        _spawnGroupBeingEdited = null;
+                        MessagePlayer(player, $"Finished editing spawn group '{alias}' and applied changes.");
                         break;
                     }
                 default:
@@ -1216,14 +1262,15 @@ namespace Oxide.Plugins
                 case "add":
                     {
                         List<string> addedPrefabs = new List<string>();
+
                         for (int i = 1; i < args.Length; i += 2)
                         {
                             string shortPrefabName = args[i];
-                            string fullPrefabPath = FindPrefabPath(shortPrefabName)?.ToLowerInvariant();
 
-                            if (string.IsNullOrEmpty(fullPrefabPath))
+                            if (!_lootContainerPrefabs.TryGetValue(shortPrefabName, out string fullPrefabPath))
                             {
-                                MessagePlayer(player, $"Prefab '{shortPrefabName}' not found.");
+                                string predefinedNames = string.Join("\n", _lootContainerPrefabs.Keys.Select(name => $"- {name}"));
+                                MessagePlayer(player, $"The prefab name '{shortPrefabName}' is not recognized. Please use one of the following valid names:\n{predefinedNames}");
                                 continue;
                             }
 
@@ -1255,7 +1302,7 @@ namespace Oxide.Plugins
 
                         if (addedPrefabs.Count > 0)
                         {
-                            MessagePlayer(player, $"Added prefabs: {string.Join(", ", addedPrefabs)} to the spawn group.");
+                            MessagePlayer(player, $"Added prefabs:\n- {string.Join("\n- ", addedPrefabs)}");
                         }
                         else
                         {
@@ -1268,14 +1315,15 @@ namespace Oxide.Plugins
                 case "remove":
                     {
                         List<string> removedPrefabs = new List<string>();
+
                         for (int i = 1; i < args.Length; i++)
                         {
                             string shortPrefabName = args[i];
-                            string fullPrefabPath = FindPrefabPath(shortPrefabName)?.ToLowerInvariant();
 
-                            if (string.IsNullOrEmpty(fullPrefabPath))
+                            if (!_lootContainerPrefabs.TryGetValue(shortPrefabName, out string fullPrefabPath))
                             {
-                                MessagePlayer(player, $"Prefab '{shortPrefabName}' not found.");
+                                string predefinedNames = string.Join("\n", _lootContainerPrefabs.Keys.Select(name => $"- {name}"));
+                                MessagePlayer(player, $"The prefab name '{shortPrefabName}' is not recognized. Please use one of the following valid names:\n{predefinedNames}");
                                 continue;
                             }
 
@@ -1297,7 +1345,7 @@ namespace Oxide.Plugins
 
                         if (removedPrefabs.Count > 0)
                         {
-                            MessagePlayer(player, $"Removed prefabs: {string.Join(", ", removedPrefabs)} from the spawn group.");
+                            MessagePlayer(player, $"Removed prefabs:\n- {string.Join("\n- ", removedPrefabs)}");
                         }
                         else
                         {
