@@ -7,6 +7,7 @@
 using Facepunch;
 using Newtonsoft.Json;
 using Oxide.Core;
+using Oxide.Core.Plugins;
 using Rust;
 using System;
 using System.Collections.Generic;
@@ -155,6 +156,9 @@ namespace Oxide.Plugins
 
             [JsonProperty("Randomize Y Rotation")]
             public bool RandomizeYRotation { get; set; }
+            
+            [JsonProperty("Replace Loot Containers After Despawn")]
+            public bool ReplaceLootContainersAfterDespawn { get; set; } = true;
 
             [JsonProperty("Prefabs")]
             public List<PrefabData> Prefabs { get; set; } = new List<PrefabData>();
@@ -228,6 +232,18 @@ namespace Oxide.Plugins
             }
         }
 
+        private void OnEntityKill(LootContainer lootContainer)
+        {
+            if (lootContainer == null)
+                return;
+            
+            LootSpawnerComponent lootSpawner = GetLootSpawnerForLootContainer(lootContainer);
+            if (lootSpawner != null)
+            {
+                lootSpawner.OnLootContainerRetired(lootContainer);
+            }
+        }
+
         #endregion Oxide Hooks
 
         #region Loot Spawner
@@ -238,12 +254,12 @@ namespace Oxide.Plugins
 
             public SpawnGroupData Data { get; set; }
             public List<SpawnPointComponent> SpawnPoints { get; set; } = new List<SpawnPointComponent>();
-            public List<BaseEntity> SpawnedEntities { get; set; } = new List<BaseEntity>();
+            public List<LootContainer> SpawnedEntities { get; set; } = new List<LootContainer>();
             public int CurrentPopulation
             {
                 get
                 {
-                    return SpawnedEntities.Count(entity => entity != null);
+                    return SpawnedEntities.Count(lootContainer => lootContainer != null);
                 }
             }
 
@@ -281,6 +297,9 @@ namespace Oxide.Plugins
 
             private void Start()
             {
+                if (!Data.Active)
+                    return;
+
                 float initialSpawnTime = GetNextSpawnTime();
                 if (Data.InitialSpawn)
                     initialSpawnTime = 0f;
@@ -333,13 +352,13 @@ namespace Oxide.Plugins
                     if (GetSpawnPoint(prefabPath, out Vector3 position, out Quaternion rotation) == null)
                         continue;
 
-                    BaseEntity entity = GameManager.server.CreateEntity(prefabPath, position, rotation);
-                    if (entity == null)
+                    LootContainer lootContainer = GameManager.server.CreateEntity(prefabPath, position, rotation) as LootContainer;
+                    if (lootContainer == null)
                         continue;
 
                     // TODO: Consider parenting the spawned entity if it's placed on another entity.
-                    entity.Spawn();
-                    SpawnedEntities.Add(entity);
+                    lootContainer.Spawn();
+                    SpawnedEntities.Add(lootContainer);
                 }
             }
 
@@ -353,9 +372,9 @@ namespace Oxide.Plugins
             {
                 for (int i = SpawnedEntities.Count - 1; i >= 0; i--)
                 {
-                    BaseEntity entity = SpawnedEntities[i];
-                    if (entity != null)
-                        entity.Kill();
+                    LootContainer lootContainer = SpawnedEntities[i];
+                    if (lootContainer != null)
+                        lootContainer.Kill();
                     SpawnedEntities.RemoveAt(i);
                 }
             }
@@ -426,6 +445,16 @@ namespace Oxide.Plugins
             }
 
             #endregion Spawn Point Selection
+
+            #region Loot Containers Removal
+
+            public void OnLootContainerRetired(LootContainer lootContainer)
+            {
+                if (Data.ReplaceLootContainersAfterDespawn)
+                    Spawn(1);
+            }
+
+            #endregion Loot Containers Removal
         }
 
         #endregion Loot Spawner
@@ -520,23 +549,6 @@ namespace Oxide.Plugins
 
                 OBB entityBounds = new OBB(position, rotation, prefabEntity.bounds);
 
-                Vector3[] corners = new Vector3[8];
-                corners[0] = entityBounds.GetPoint(-1f, -1f, -1f);
-                corners[1] = entityBounds.GetPoint(-1f, -1f, 1f);
-                corners[2] = entityBounds.GetPoint(-1f, 1f, -1f);
-                corners[3] = entityBounds.GetPoint(-1f, 1f, 1f);
-                corners[4] = entityBounds.GetPoint(1f, -1f, -1f);
-                corners[5] = entityBounds.GetPoint(1f, -1f, 1f);
-                corners[6] = entityBounds.GetPoint(1f, 1f, -1f);
-                corners[7] = entityBounds.GetPoint(1f, 1f, 1f);
-
-                for (int i = 0; i < 4; i++)
-                {
-                    DrawUtil.Line(PlayerUtil.FindById(76561199104881804), 2f, Color.blue, corners[i], corners[(i + 1) % 4]);
-                    DrawUtil.Line(PlayerUtil.FindById(76561199104881804), 2f, Color.blue, corners[i + 4], corners[((i + 1) % 4) + 4]);
-                    DrawUtil.Line(PlayerUtil.FindById(76561199104881804), 2f, Color.blue, corners[i], corners[i + 4]);
-                }
-
                 Collider[] colliders = Physics.OverlapBox(
                     entityBounds.position,
                     entityBounds.extents,
@@ -546,21 +558,7 @@ namespace Oxide.Plugins
                 );
 
                 if (colliders.Length > 0)
-                {
-                    foreach (Collider collider in colliders)
-                    {
-                        Bounds colliderBounds = collider.bounds;
-                        Vector3 colliderCenter = colliderBounds.center;
-                        Vector3 colliderExtents = colliderBounds.extents;
-
-                        DrawUtil.Line(PlayerUtil.FindById(76561199104881804), 2f, Color.red, colliderCenter - colliderExtents, colliderCenter + colliderExtents);
-                    }
-
-                    DrawUtil.Text(PlayerUtil.FindById(76561199104881804), 2f, Color.red, position, "No Space");
                     return false;
-                }
-
-                DrawUtil.Text(PlayerUtil.FindById(76561199104881804), 2f, Color.green, position, "Space Available");
 
                 return true;
             }
@@ -574,6 +572,41 @@ namespace Oxide.Plugins
         }
 
         #endregion Spawn Point
+
+        #region API
+
+        [HookMethod(nameof(API_ForceSpawnLoot))]
+        public void API_ForceSpawnLoot(string spawnGroupAlias)
+        {
+            LootSpawnerComponent lootSpawner = GetLootSpawnerByAlias(spawnGroupAlias);
+            if (lootSpawner != null)
+            {
+                lootSpawner.Fill();
+            }
+        }
+
+        [HookMethod(nameof(API_ForceClearLoot))]
+        public void API_ForceClearLoot(string spawnGroupAlias)
+        {
+            LootSpawnerComponent lootSpawner = GetLootSpawnerByAlias(spawnGroupAlias);
+            if (lootSpawner != null)
+            {
+                lootSpawner.Clear();
+            }
+        }
+
+        [HookMethod(nameof(API_IsCustomSpawned))]
+        public bool API_IsCustomSpawned(LootContainer lootContainer)
+        {
+            return GetLootSpawnerForLootContainer(lootContainer) != null;
+        }
+
+        #endregion API
+
+        #region Exposed Hooks
+
+
+        #endregion Exposed Hooks
 
         #region Helper Functions
 
@@ -615,6 +648,30 @@ namespace Oxide.Plugins
                 return fullPrefabPath.Replace(".prefab", "");
 
             return fullPrefabPath.Substring(lastSlashIndex + 1).Replace(".prefab", "");
+        }
+
+        private LootSpawnerComponent GetLootSpawnerByAlias(string spawnGroupAlias)
+        {
+            if (string.IsNullOrEmpty(spawnGroupAlias))
+                return null;
+            
+            foreach (LootSpawnerComponent lootSpawner in _lootSpawners)
+            {
+                if (lootSpawner.Data.Alias.Equals(spawnGroupAlias, StringComparison.OrdinalIgnoreCase))
+                    return lootSpawner;
+            }
+
+            return null;
+        }
+        
+        private LootSpawnerComponent GetLootSpawnerForLootContainer(LootContainer lootContainer)
+        {
+            foreach (LootSpawnerComponent lootSpawner in _lootSpawners)
+            {
+                if (lootSpawner.SpawnedEntities.Contains(lootContainer))
+                    return lootSpawner;
+            }
+            return null;
         }
 
         #endregion Helper Functions
@@ -907,6 +964,7 @@ namespace Oxide.Plugins
             /// - mindelay
             /// - maxdelay
             /// - randrot
+            /// - replaceondespawn
             /// </summary>
             public const string SPAWN_GROUP = "cls.spawngroup";
 
@@ -973,7 +1031,8 @@ namespace Oxide.Plugins
                             InitialSpawn = true,
                             MinimumRespawnDelaySeconds = 30f,
                             MaximumRespawnDelaySeconds = 60f,
-                            RandomizeYRotation = true
+                            RandomizeYRotation = true,
+                            ReplaceLootContainersAfterDespawn = true
                         };
 
                         DataFileUtil.Save(filePath, newGroup);
@@ -999,7 +1058,7 @@ namespace Oxide.Plugins
                             return;
                         }
 
-                        LootSpawnerComponent lootSpawner = _lootSpawners.FirstOrDefault(ls => ls.Data.Alias.Equals(alias, StringComparison.OrdinalIgnoreCase));
+                        LootSpawnerComponent lootSpawner = GetLootSpawnerByAlias(alias);
                         if (lootSpawner != null)
                             lootSpawner.Destroy();
 
@@ -1139,6 +1198,18 @@ namespace Oxide.Plugins
                                     isValueValid = false;
                                 }
                                 break;
+                            case "replaceondespawn":
+                                if (bool.TryParse(value, out bool replaceLootContainers))
+                                {
+                                    _spawnGroupBeingEdited.ReplaceLootContainersAfterDespawn = replaceLootContainers;
+                                }
+                                else
+                                {
+                                    MessagePlayer(player, "Invalid value for 'ReplaceLootContainersAfterDespawn'. Please enter 'true' or 'false'.");
+                                    isValueValid = false;
+                                }
+                                break;
+
 
                             default:
                                 MessagePlayer(player, $"Unknown property '{property}'.");
