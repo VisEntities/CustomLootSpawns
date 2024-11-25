@@ -20,7 +20,7 @@ using Random = UnityEngine.Random;
 namespace Oxide.Plugins
 {
     [Info("Custom Loot Spawns", "VisEntities", "1.0.0")]
-    [Description(" ")]
+    [Description("Lets you add additional spawn points for loot containers.")]
     public class CustomLootSpawns : RustPlugin
     {
         #region Fields
@@ -968,12 +968,15 @@ namespace Oxide.Plugins
                 return;
 
             if (!PermissionUtil.HasPermission(player, PermissionUtil.ADMIN))
+            {
+                MessagePlayer(player, Lang.NoPermission);
                 return;
+            }
 
             string[] args = conArgs.Args;
             if (args == null || args.Length == 0)
             {
-                MessagePlayer(player, "Usage: cls.spawngroup <create/edit/remove> or cls.spawngroup set <property> <value>");
+                MessagePlayer(player, Lang.SpawnGroupUsage);
                 return;
             }
 
@@ -984,7 +987,7 @@ namespace Oxide.Plugins
                     {
                         if (args.Length < 2)
                         {
-                            MessagePlayer(player, "Usage: cls.spawngroup create <alias>");
+                            MessagePlayer(player, Lang.SpawnGroupCreateUsage);
                             return;
                         }
 
@@ -992,7 +995,7 @@ namespace Oxide.Plugins
                         string filePath = DataFileUtil.GetFilePath(alias);
                         if (DataFileUtil.Exists(filePath))
                         {
-                            MessagePlayer(player, $"Spawn group with alias '{alias}' already exists.");
+                            MessagePlayer(player, Lang.SpawnGroupCreateAlreadyExists, alias);
                             return;
                         }
 
@@ -1014,14 +1017,14 @@ namespace Oxide.Plugins
                         DataFileUtil.Save(filePath, newGroup);
                         _spawnGroupBeingEdited = newGroup;
 
-                        MessagePlayer(player, $"Spawn group '{alias}' created and selected for editing.");
+                        MessagePlayer(player, Lang.SpawnGroupCreated, alias);
                         break;
                     }
                 case "edit":
                     {
                         if (args.Length < 2)
                         {
-                            MessagePlayer(player, "Usage: cls.spawngroup edit <alias>");
+                            MessagePlayer(player, Lang.SpawnGroupEditUsage);
                             return;
                         }
 
@@ -1030,7 +1033,7 @@ namespace Oxide.Plugins
                         SpawnGroupData group = DataFileUtil.LoadIfExists<SpawnGroupData>(filePath);
                         if (group == null)
                         {
-                            MessagePlayer(player, $"Spawn group '{alias}' not found.");
+                            MessagePlayer(player, Lang.SpawnGroupNotFound, alias);
                             return;
                         }
 
@@ -1039,7 +1042,7 @@ namespace Oxide.Plugins
                             lootSpawner.Destroy();
 
                         _spawnGroupBeingEdited = group;
-                        MessagePlayer(player, $"Spawn group '{alias}' selected for editing.");
+                        MessagePlayer(player, Lang.SpawnGroupEdited, alias);
                         VisualizeSpawnGroup(player);
                         break;
                     }
@@ -1047,7 +1050,7 @@ namespace Oxide.Plugins
                     {
                         if (_spawnGroupBeingEdited == null)
                         {
-                            MessagePlayer(player, "You must edit a spawn group before removing it.");
+                            MessagePlayer(player, Lang.SpawnGroupNoGroupBeingEdited);
                             return;
                         }
 
@@ -1056,14 +1059,14 @@ namespace Oxide.Plugins
                         DataFileUtil.Delete(filePath);
                         _spawnGroupBeingEdited = null;
 
-                        MessagePlayer(player, $"Spawn group '{alias}' removed.");
+                        MessagePlayer(player, Lang.SpawnGroupRemoved, alias);
                         break;
                     }
                 case "set":
                     {
                         if (_spawnGroupBeingEdited == null)
                         {
-                            MessagePlayer(player, "You must edit a spawn group before setting its properties.");
+                            MessagePlayer(player, Lang.SpawnGroupSetNoGroupBeingEdited);
                             return;
                         }
 
@@ -1081,7 +1084,7 @@ namespace Oxide.Plugins
                                 "- randrot",
                                 "- replacelooted"
                             });
-                            MessagePlayer(player, $"Usage: cls.spawngroup set <property> <value>\n\nAvailable properties:\n{editableProperties}");
+                            MessagePlayer(player, Lang.SpawnGroupSetUsage, editableProperties);
                             return;
                         }
 
@@ -1098,7 +1101,7 @@ namespace Oxide.Plugins
                                 }
                                 else
                                 {
-                                    MessagePlayer(player, "Invalid value for 'Active'. Please enter 'true' or 'false'.");
+                                    MessagePlayer(player, Lang.SpawnGroupSetInvalidActive);
                                     isValueValid = false;
                                 }
                                 break;
@@ -1110,7 +1113,7 @@ namespace Oxide.Plugins
                                 }
                                 else
                                 {
-                                    MessagePlayer(player, "Invalid value for 'InitialSpawn'. Please enter 'true' or 'false'.");
+                                    MessagePlayer(player, Lang.SpawnGroupSetInvalidInitialSpawn);
                                     isValueValid = false;
                                 }
                                 break;
@@ -1122,7 +1125,7 @@ namespace Oxide.Plugins
                                 }
                                 else
                                 {
-                                    MessagePlayer(player, "Invalid value for 'MaximumPopulation'. Please enter a non-negative integer.");
+                                    MessagePlayer(player, Lang.SpawnGroupSetInvalidMaximumPop);
                                     isValueValid = false;
                                 }
                                 break;
@@ -1134,7 +1137,7 @@ namespace Oxide.Plugins
                                 }
                                 else
                                 {
-                                    MessagePlayer(player, "Invalid value for 'MinimumNumberToSpawnPerTick'. Please enter a non-negative integer.");
+                                    MessagePlayer(player, Lang.SpawnGroupSetInvalidMinimumSpawn);
                                     isValueValid = false;
                                 }
                                 break;
@@ -1146,7 +1149,7 @@ namespace Oxide.Plugins
                                 }
                                 else
                                 {
-                                    MessagePlayer(player, "Invalid value for 'MaximumNumberToSpawnPerTick'. It must be an integer greater than or equal to 'MinimumNumberToSpawnPerTick'.");
+                                    MessagePlayer(player, Lang.SpawnGroupSetInvalidMaximumSpawn);
                                     isValueValid = false;
                                 }
                                 break;
@@ -1158,7 +1161,7 @@ namespace Oxide.Plugins
                                 }
                                 else
                                 {
-                                    MessagePlayer(player, "Invalid value for 'MinimumRespawnDelaySeconds'. Please enter a positive number.");
+                                    MessagePlayer(player, Lang.SpawnGroupSetInvalidMinimumDelay);
                                     isValueValid = false;
                                 }
                                 break;
@@ -1170,7 +1173,7 @@ namespace Oxide.Plugins
                                 }
                                 else
                                 {
-                                    MessagePlayer(player, "Invalid value for 'MaximumRespawnDelaySeconds'. It must be a number greater than or equal to 'MinimumRespawnDelaySeconds'.");
+                                    MessagePlayer(player, Lang.SpawnGroupSetInvalidMaximumDelay);
                                     isValueValid = false;
                                 }
                                 break;
@@ -1182,7 +1185,7 @@ namespace Oxide.Plugins
                                 }
                                 else
                                 {
-                                    MessagePlayer(player, "Invalid value for 'RandomizeYRotation'. Please enter 'true' or 'false'.");
+                                    MessagePlayer(player, Lang.SpawnGroupSetInvalidRandomYRotation);
                                     isValueValid = false;
                                 }
                                 break;
@@ -1194,7 +1197,7 @@ namespace Oxide.Plugins
                                 }
                                 else
                                 {
-                                    MessagePlayer(player, "Invalid value for 'ReplaceLootedContainers'. Please enter 'true' or 'false'.");
+                                    MessagePlayer(player, Lang.SpawnGroupSetInvalidReplaceLootedContainers);
                                     isValueValid = false;
                                 }
                                 break;
@@ -1212,14 +1215,14 @@ namespace Oxide.Plugins
                                             "- randrot",
                                             "- replacelooted"
                                         });
-                                MessagePlayer(player, $"Unknown property '{property}'.\n\nAvailable properties:\n{editableProperties}");
+                                MessagePlayer(player, Lang.SpawnGroupSetUnknownProperty, property, editableProperties);
                                 return;
                         }
 
                         if (isValueValid)
                         {
                             DataFileUtil.Save(DataFileUtil.GetFilePath(_spawnGroupBeingEdited.Alias), _spawnGroupBeingEdited);
-                            MessagePlayer(player, $"Property '{property}' set to '{value}' for spawn group '{_spawnGroupBeingEdited.Alias}'.");
+                            MessagePlayer(player, Lang.SpawnGroupSetPropertyUpdated, property, value, _spawnGroupBeingEdited.Alias);
                             VisualizeSpawnGroup(player);
                         }
                         break;
@@ -1228,7 +1231,7 @@ namespace Oxide.Plugins
                     {
                         if (_spawnGroupBeingEdited == null)
                         {
-                            MessagePlayer(player, "You must edit a spawn group before finishing editing.");
+                            MessagePlayer(player, Lang.SpawnGroupDoneNoGroupBeingEdited);
                             return;
                         }
 
@@ -1240,11 +1243,11 @@ namespace Oxide.Plugins
                         LootSpawnerComponent.Create(_spawnGroupBeingEdited);
 
                         _spawnGroupBeingEdited = null;
-                        MessagePlayer(player, $"Finished editing spawn group '{alias}' and applied changes.");
+                        MessagePlayer(player, Lang.SpawnGroupDoneFinishedEditing, alias);
                         break;
                     }
                 default:
-                    MessagePlayer(player, $"Unknown command '{subCommand}'.");
+                    MessagePlayer(player, Lang.SpawnGroupUnknownCommand, subCommand);
                     break;
             }
         }
@@ -1260,18 +1263,21 @@ namespace Oxide.Plugins
                 return;
 
             if (!PermissionUtil.HasPermission(player, PermissionUtil.ADMIN))
+            {
+                MessagePlayer(player, Lang.NoPermission);
                 return;
+            }
 
             string[] args = conArgs.Args;
             if (args == null || args.Length == 0)
             {
-                MessagePlayer(player, "Usage: cls.spawnpoint <add/remove> <position> [radius]");
+                MessagePlayer(player, Lang.SpawnPointUsage);
                 return;
             }
 
             if (_spawnGroupBeingEdited == null)
             {
-                MessagePlayer(player, "You must edit a spawn group before managing spawn points.");
+                MessagePlayer(player, Lang.SpawnPointNoGroupBeingEdited);
                 return;
             }
 
@@ -1282,7 +1288,7 @@ namespace Oxide.Plugins
                     {
                         if (args.Length < 2)
                         {
-                            MessagePlayer(player, "Usage: cls.spawnpoint add <position> [radius]");
+                            MessagePlayer(player, Lang.SpawnPointAddUsage);
                             return;
                         }
 
@@ -1295,7 +1301,7 @@ namespace Oxide.Plugins
 
                         if (!TerrainUtil.GetGroundInfo(position, out RaycastHit hitInfo, 2f, LAYER_GROUND | LAYER_BUILDINGS))
                         {
-                            MessagePlayer(player, "The selected position is invalid. Please choose a position on a valid surface.");
+                            MessagePlayer(player, Lang.SpawnPointAddInvalidPosition);
                             return;
                         }
 
@@ -1304,13 +1310,13 @@ namespace Oxide.Plugins
                         float radius = 0f;
                         if (args.Length > 2 && !float.TryParse(args[2], out radius))
                         {
-                            MessagePlayer(player, "Invalid radius. Please specify a valid number.");
+                            MessagePlayer(player, Lang.SpawnPointAddInvalidRadius);
                             return;
                         }
 
                         if (radius < 0)
                         {
-                            MessagePlayer(player, "Radius cannot be negative.");
+                            MessagePlayer(player, Lang.SpawnPointAddRadiusNegative);
                             return;
                         }
 
@@ -1326,7 +1332,7 @@ namespace Oxide.Plugins
                         DataFileUtil.Save(DataFileUtil.GetFilePath(_spawnGroupBeingEdited.Alias), _spawnGroupBeingEdited);
 
                         VisualizeSpawnGroup(player);
-                        MessagePlayer(player, $"Spawn point added with id '{spawnPointId}', radius {radius} at position {position}.");
+                        MessagePlayer(player, Lang.SpawnPointAddSuccess, spawnPointId, radius, position);
                         break;
                     }
 
@@ -1340,7 +1346,7 @@ namespace Oxide.Plugins
 
                             if (spawnPointToRemove == null)
                             {
-                                MessagePlayer(player, $"No spawn point found with id '{spawnPointId}'.");
+                                MessagePlayer(player, Lang.SpawnPointRemoveNotFound, spawnPointId);
                                 return;
                             }
 
@@ -1348,7 +1354,7 @@ namespace Oxide.Plugins
                             DataFileUtil.Save(DataFileUtil.GetFilePath(_spawnGroupBeingEdited.Alias), _spawnGroupBeingEdited);
 
                             VisualizeSpawnGroup(player);
-                            MessagePlayer(player, $"Spawn point with id '{spawnPointId}' removed.");
+                            MessagePlayer(player, Lang.SpawnPointRemoveSuccess, spawnPointId, spawnPointToRemove.Position);
                             return;
                         }
 
@@ -1361,7 +1367,7 @@ namespace Oxide.Plugins
 
                         if (closestSpawnPoint == null)
                         {
-                            MessagePlayer(player, "No spawn point found within range.");
+                            MessagePlayer(player, Lang.SpawnPointRemoveNoInRange);
                             return;
                         }
 
@@ -1371,12 +1377,12 @@ namespace Oxide.Plugins
                         DataFileUtil.Save(DataFileUtil.GetFilePath(_spawnGroupBeingEdited.Alias), _spawnGroupBeingEdited);
 
                         VisualizeSpawnGroup(player);
-                        MessagePlayer(player, $"Spawn point with id '{removedId}' at position {closestSpawnPoint.Position} removed.");
+                        MessagePlayer(player, Lang.SpawnPointRemoveSuccess, removedId, closestSpawnPoint.Position);
                         break;
                     }
 
                 default:
-                    MessagePlayer(player, $"Unknown subcommand '{subCommand}'. Valid options are 'add' or 'remove'.");
+                    MessagePlayer(player, Lang.SpawnPointUnknownSubcommand, subCommand);
                     break;
             }
         }
@@ -1392,18 +1398,21 @@ namespace Oxide.Plugins
                 return;
 
             if (!PermissionUtil.HasPermission(player, PermissionUtil.ADMIN))
+            {
+                MessagePlayer(player, Lang.NoPermission);
                 return;
+            }
 
             string[] args = conArgs.Args;
             if (args == null || args.Length < 2)
             {
-                MessagePlayer(player, "Usage: cls.prefab <add/remove> <shortPrefabName1> [weight1] <shortPrefabName2> [weight2] ...");
+                MessagePlayer(player, Lang.PrefabUsage);
                 return;
             }
 
             if (_spawnGroupBeingEdited == null)
             {
-                MessagePlayer(player, "You must edit a spawn group before managing prefabs.");
+                MessagePlayer(player, Lang.PrefabNoGroupBeingEdited);
                 return;
             }
 
@@ -1421,20 +1430,20 @@ namespace Oxide.Plugins
                             if (!_lootContainerPrefabs.ContainsKey(shortPrefabName))
                             {
                                 string predefinedNames = string.Join("\n", _lootContainerPrefabs.Keys.Select(name => $"- {name}"));
-                                MessagePlayer(player, $"The prefab name '{shortPrefabName}' is not recognized. Please use one of the following valid names:\n{predefinedNames}");
+                                MessagePlayer(player, Lang.PrefabAddUnrecognizedPrefab, shortPrefabName, predefinedNames);
                                 continue;
                             }
 
                             if (_spawnGroupBeingEdited.Prefabs.Any(p => p.Prefab.Equals(shortPrefabName, StringComparison.OrdinalIgnoreCase)))
                             {
-                                MessagePlayer(player, $"Prefab '{shortPrefabName}' is already in the spawn group.");
+                                MessagePlayer(player, Lang.PrefabAddAlreadyExists, shortPrefabName);
                                 continue;
                             }
 
                             int weight = 1;
                             if (i + 1 < args.Length && (!int.TryParse(args[i + 1], out weight) || weight <= 0))
                             {
-                                MessagePlayer(player, $"Invalid weight for prefab '{shortPrefabName}'. Defaulting to weight 1.");
+                                MessagePlayer(player, Lang.PrefabAddInvalidWeight, shortPrefabName);
                                 weight = 1;
                             }
 
@@ -1453,11 +1462,11 @@ namespace Oxide.Plugins
 
                         if (addedPrefabs.Count > 0)
                         {
-                            MessagePlayer(player, $"Added prefabs:\n- {string.Join("\n- ", addedPrefabs)}");
+                            MessagePlayer(player, Lang.PrefabAddSuccess, string.Join("\n- ", addedPrefabs));
                         }
                         else
                         {
-                            MessagePlayer(player, "No prefabs were added.");
+                            MessagePlayer(player, Lang.PrefabAddNoneAdded);
                         }
 
                         break;
@@ -1476,7 +1485,7 @@ namespace Oxide.Plugins
 
                             if (prefabToRemove == null)
                             {
-                                MessagePlayer(player, $"Prefab '{shortPrefabName}' not found in the spawn group.");
+                                MessagePlayer(player, Lang.PrefabRemoveNotFound, shortPrefabName);
                                 continue;
                             }
 
@@ -1489,18 +1498,18 @@ namespace Oxide.Plugins
 
                         if (removedPrefabs.Count > 0)
                         {
-                            MessagePlayer(player, $"Removed prefabs:\n- {string.Join("\n- ", removedPrefabs)}");
+                            MessagePlayer(player, Lang.PrefabRemoveSuccess, string.Join("\n- ", removedPrefabs));
                         }
                         else
                         {
-                            MessagePlayer(player, "No prefabs were removed.");
+                            MessagePlayer(player, Lang.PrefabRemoveNoneRemoved);
                         }
 
                         break;
                     }
 
                 default:
-                    MessagePlayer(player, $"Unknown subcommand '{subCommand}'. Valid options are 'add' or 'remove'.");
+                    MessagePlayer(player, Lang.PrefabUnknownSubcommand, subCommand);
                     break;
             }
         }
@@ -1560,10 +1569,61 @@ namespace Oxide.Plugins
 
         #region Localization
 
-        // TODO: Localize all messages.
         private class Lang
         {
             public const string NoPermission = "NoPermission";
+
+            public const string SpawnGroupUsage = "SpawnGroup.Usage";
+            public const string SpawnGroupCreateUsage = "SpawnGroup.CreateUsage";
+            public const string SpawnGroupCreateAlreadyExists = "SpawnGroup.CreateAlreadyExists";
+            public const string SpawnGroupCreated = "SpawnGroup.Created";
+            public const string SpawnGroupEditUsage = "SpawnGroup.EditUsage";
+            public const string SpawnGroupNotFound = "SpawnGroup.NotFound";
+            public const string SpawnGroupEdited = "SpawnGroup.Edited";
+            public const string SpawnGroupNoGroupBeingEdited = "SpawnGroup.NoGroupBeingEdited";
+            public const string SpawnGroupRemoved = "SpawnGroup.Removed";
+            public const string SpawnGroupUnknownCommand = "SpawnGroup.UnknownCommand";
+             
+            public const string SpawnGroupSetNoGroupBeingEdited = "SpawnGroup.Set.NoGroupBeingEdited";
+            public const string SpawnGroupSetUsage = "SpawnGroup.Set.Usage";
+            public const string SpawnGroupSetInvalidActive = "SpawnGroup.Set.InvalidActive";
+            public const string SpawnGroupSetInvalidInitialSpawn = "SpawnGroup.Set.InvalidInitialSpawn";
+            public const string SpawnGroupSetInvalidMaximumPop = "SpawnGroup.Set.InvalidMaximumPop";
+            public const string SpawnGroupSetInvalidMinimumSpawn = "SpawnGroup.Set.InvalidMinimumSpawn";
+            public const string SpawnGroupSetInvalidMaximumSpawn = "SpawnGroup.Set.InvalidMaximumSpawn";
+            public const string SpawnGroupSetInvalidMinimumDelay = "SpawnGroup.Set.InvalidMinimumDelay";
+            public const string SpawnGroupSetInvalidMaximumDelay = "SpawnGroup.Set.InvalidMaximumDelay";
+            public const string SpawnGroupSetInvalidRandomYRotation = "SpawnGroup.Set.InvalidRandomRotation";
+            public const string SpawnGroupSetInvalidReplaceLootedContainers = "SpawnGroup.Set.InvalidReplaceLootedContainers";
+            public const string SpawnGroupSetUnknownProperty = "SpawnGroup.Set.UnknownProperty";
+            public const string SpawnGroupSetPropertyUpdated = "SpawnGroup.Set.PropertyUpdated";
+
+            public const string SpawnGroupDoneNoGroupBeingEdited = "SpawnGroup.Done.NoGroupBeingEdited";
+            public const string SpawnGroupDoneFinishedEditing = "SpawnGroup.Done.FinishedEditing";
+            
+            public const string SpawnPointUsage = "SpawnPoint.Usage";
+            public const string SpawnPointNoGroupBeingEdited = "SpawnPoint.NoGroupBeingEdited";
+            public const string SpawnPointAddUsage = "SpawnPoint.Add.Usage";
+            public const string SpawnPointAddInvalidPosition = "SpawnPoint.Add.InvalidPosition";
+            public const string SpawnPointAddInvalidRadius = "SpawnPoint.Add.InvalidRadius";
+            public const string SpawnPointAddRadiusNegative = "SpawnPoint.Add.RadiusNegative";
+            public const string SpawnPointAddSuccess = "SpawnPoint.Add.Success";
+            public const string SpawnPointRemoveNotFound = "SpawnPoint.Remove.NotFound";
+            public const string SpawnPointRemoveNoInRange = "SpawnPoint.Remove.NoInRange";
+            public const string SpawnPointRemoveSuccess = "SpawnPoint.Remove.Success";
+            public const string SpawnPointUnknownSubcommand = "SpawnPoint.UnknownSubcommand";
+
+            public const string PrefabUsage = "Prefab.Usage";
+            public const string PrefabNoGroupBeingEdited = "Prefab.NoGroupBeingEdited";
+            public const string PrefabAddUnrecognizedPrefab = "Prefab.Add.UnrecognizedPrefab";
+            public const string PrefabAddAlreadyExists = "Prefab.Add.AlreadyExists";
+            public const string PrefabAddInvalidWeight = "Prefab.Add.InvalidWeight";
+            public const string PrefabAddSuccess = "Prefab.Add.Success";
+            public const string PrefabAddNoneAdded = "Prefab.Add.NoneAdded";
+            public const string PrefabRemoveNotFound = "Prefab.Remove.NotFound";
+            public const string PrefabRemoveSuccess = "Prefab.Remove.Success";
+            public const string PrefabRemoveNoneRemoved = "Prefab.Remove.NoneRemoved";
+            public const string PrefabUnknownSubcommand = "Prefab.UnknownSubcommand";
         }
 
         protected override void LoadDefaultMessages()
@@ -1572,6 +1632,57 @@ namespace Oxide.Plugins
             {
                 [Lang.NoPermission] = "You don't have permission to use this command.",
 
+                [Lang.SpawnGroupUsage] = "Usage: cls.spawngroup <create/edit/remove> or cls.spawngroup set <property> <value>",
+                [Lang.SpawnGroupCreateUsage] = "Usage: cls.spawngroup create <alias>",
+                [Lang.SpawnGroupCreateAlreadyExists] = "Spawn group with alias '{0}' already exists.",
+                [Lang.SpawnGroupCreated] = "Spawn group '{0}' created and selected for editing.",
+                [Lang.SpawnGroupEditUsage] = "Usage: cls.spawngroup edit <alias>",
+                [Lang.SpawnGroupNotFound] = "Spawn group '{0}' not found.",
+                [Lang.SpawnGroupEdited] = "Spawn group '{0}' selected for editing.",
+                [Lang.SpawnGroupNoGroupBeingEdited] = "You must edit a spawn group before removing it.",
+                [Lang.SpawnGroupRemoved] = "Spawn group '{0}' removed successfully.",
+                [Lang.SpawnGroupUnknownCommand] = "Unknown command '{0}'.",
+
+                [Lang.SpawnGroupSetNoGroupBeingEdited] = "You must edit a spawn group before setting its properties.",
+                [Lang.SpawnGroupSetUsage] = "Usage: cls.spawngroup set <property> <value>\n\nAvailable properties:\n{0}",
+                [Lang.SpawnGroupSetInvalidActive] = "Invalid value for 'Active'. Please enter 'true' or 'false'.",
+                [Lang.SpawnGroupSetInvalidInitialSpawn] = "Invalid value for 'InitialSpawn'. Please enter 'true' or 'false'.",
+                [Lang.SpawnGroupSetInvalidMaximumPop] = "Invalid value for 'MaximumPopulation'. Please enter a non-negative integer.",
+                [Lang.SpawnGroupSetInvalidMinimumSpawn] = "Invalid value for 'MinimumNumberToSpawnPerTick'. Please enter a non-negative integer.",
+                [Lang.SpawnGroupSetInvalidMaximumSpawn] = "Invalid value for 'MaximumNumberToSpawnPerTick'. It must be an integer greater than or equal to 'MinimumNumberToSpawnPerTick'.",
+                [Lang.SpawnGroupSetInvalidMinimumDelay] = "Invalid value for 'MinimumRespawnDelaySeconds'. Please enter a positive number.",
+                [Lang.SpawnGroupSetInvalidMaximumDelay] = "Invalid value for 'MaximumRespawnDelaySeconds'. It must be a number greater than or equal to 'MinimumRespawnDelaySeconds'.",
+                [Lang.SpawnGroupSetInvalidRandomYRotation] = "Invalid value for 'RandomizeYRotation'. Please enter 'true' or 'false'.",
+                [Lang.SpawnGroupSetInvalidReplaceLootedContainers] = "Invalid value for 'ReplaceLootedContainers'. Please enter 'true' or 'false'.",
+                [Lang.SpawnGroupSetUnknownProperty] = "Unknown property '{0}'.\n\nAvailable properties:\n{1}",
+                [Lang.SpawnGroupSetPropertyUpdated] = "Property '{0}' set to '{1}' for spawn group '{2}'.",
+
+                [Lang.SpawnGroupDoneNoGroupBeingEdited] = "You must edit a spawn group before finishing editing.",
+                [Lang.SpawnGroupDoneFinishedEditing] = "Finished editing spawn group '{0}' and applied changes.",
+
+                [Lang.SpawnPointUsage] = "Usage: cls.spawnpoint <add/remove> <position> [radius]",
+                [Lang.SpawnPointNoGroupBeingEdited] = "You must edit a spawn group before managing spawn points.",
+                [Lang.SpawnPointAddUsage] = "Usage: cls.spawnpoint add <position> [radius]",
+                [Lang.SpawnPointAddInvalidPosition] = "The selected position is invalid. Please choose a position on a valid surface.",
+                [Lang.SpawnPointAddInvalidRadius] = "Invalid radius. Please specify a valid number.",
+                [Lang.SpawnPointAddRadiusNegative] = "Radius cannot be negative.",
+                [Lang.SpawnPointAddSuccess] = "Spawn point added with id '{0}', radius {1} at position {2}.",
+                [Lang.SpawnPointRemoveNotFound] = "No spawn point found with id '{0}'.",
+                [Lang.SpawnPointRemoveNoInRange] = "No spawn point found within range.",
+                [Lang.SpawnPointRemoveSuccess] = "Spawn point with id '{0}' at position {1} removed.",
+                [Lang.SpawnPointUnknownSubcommand] = "Unknown subcommand '{0}'. Valid options are 'add' or 'remove'.",
+
+                [Lang.PrefabUsage] = "Usage: cls.prefab <add/remove> <shortPrefabName1> [weight1] <shortPrefabName2> [weight2] ...",
+                [Lang.PrefabNoGroupBeingEdited] = "You must edit a spawn group before managing prefabs.",
+                [Lang.PrefabAddUnrecognizedPrefab] = "The prefab name '{0}' is not recognized. Please use one of the following valid names:\n{1}",
+                [Lang.PrefabAddAlreadyExists] = "Prefab '{0}' is already in the spawn group.",
+                [Lang.PrefabAddInvalidWeight] = "Invalid weight for prefab '{0}'. Defaulting to weight 1.",
+                [Lang.PrefabAddSuccess] = "Added prefabs:\n- {0}",
+                [Lang.PrefabAddNoneAdded] = "No prefabs were added.",
+                [Lang.PrefabRemoveNotFound] = "Prefab '{0}' not found in the spawn group.",
+                [Lang.PrefabRemoveSuccess] = "Removed prefabs:\n- {0}",
+                [Lang.PrefabRemoveNoneRemoved] = "No prefabs were removed.",
+                [Lang.PrefabUnknownSubcommand] = "Unknown subcommand '{0}'. Valid options are 'add' or 'remove'."
             }, this, "en");
         }
 
